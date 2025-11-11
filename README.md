@@ -40,6 +40,14 @@ nvidia-smi
 
 ```
 
+# Conceitos-Chave
+
+* Paralelismo Massivo - O problema da multiplicação de matrizes é altamente paralelizável - cada elemento de saída C[i][j] pode ser calculado de forma independente.
+  
+* Memória Compartilhada - Cada bloco de threads armazena "tiles" de A e B em memória rápida (shared memory), reduzindo leituras repetidas da memória global.
+
+* Coalescing - Os acessos às memória global foram otimizados para que threads consecutivas acessem endereços consecutivos, garantindo eficiência máxima de leitura e escrita.
+
 
 
 
