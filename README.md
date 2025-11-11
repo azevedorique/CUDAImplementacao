@@ -95,6 +95,20 @@ benchmark_results.csv
 ```
 
 
+# Métricas de Desempenho
+
+* Tempo de execução (ms): duração média das execuções
+* GFLOPS (GigaFLOPS): número de operações de ponto flutuante por segundo.
+* Speedup (x): razão entre o tempo CPU e GPU.
+* Erro absoluto máximo: diferença numérica entre CPU e GPU.
+
+# Grupo
+
+* Henrique Guerra
+* Celso Bezerra
+* João Victor Vieira
+* Ricardo Costa
+
 
 
 
