@@ -16,11 +16,31 @@ O código inclui validação númerica, coalescimento de memória global, uso de
 
 # Estrutura do Projeto
 
+```sh
 cuda_matrix_benchmark/
 │
 ├── matmul_cuda_coalesced.cu    ← Implementação CUDA otimizada (coalescing + shared memory)
 ├── run_benchmark.sh             ← Script de benchmark automatizado (CPU × CUDA)
 ├── benchmark_results.csv        ← Arquivo de saída com resultados (gerado automaticamente)
 └── README.md                    ← Documentação do projeto
+
+```
+# Requisitos
+
+* GPU NVIDIA com suporte a CUDA
+* CUDA Toolkit 11+
+* Compilador compatível (nvcc)
+* Shell Bash (Linux, macOS ou WSL no Windows)
+
+Verifique a instalação:
+
+```sh
+nvcc --version
+nvidia-smi
+
+```
+
+
+
 
 
