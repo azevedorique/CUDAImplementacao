@@ -49,6 +49,31 @@ nvidia-smi
 * Coalescing - Os acessos às memória global foram otimizados para que threads consecutivas acessem endereços consecutivos, garantindo eficiência máxima de leitura e escrita.
 
 
+# Execução da Multiplicação
+
+1. Compilar o código CUDA:
+
+```sh
+nvcc -O3 -arch=sm_70 -o matmul_cuda_coalesced matmul_cuda_coalesced.cu
+```
+Substitua sm_70 pela arquitetura da sua GPU (ex.: sm_86 para RTX 30xx).
+
+2. Executar manualmente:
+
+``` sh
+./matmul_cuda_coalesced M N K ITER TILE
+
+```
+
+Exemplo:
+
+``` sh
+./matmul_cuda_coalesced 1024 1024 1024 10 16
+
+```
+
+
+
 
 
 
