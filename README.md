@@ -72,6 +72,30 @@ Exemplo:
 
 ```
 
+# Execução Automatizada (Benchmark)
+
+Para testar múltiplos tamanhos de matrizes e tiles automaticamente:
+
+1. Dar permissão ao script:
+
+ ``` sh
+chmod +x run_benchmark.sh
+```
+
+2. Executar o benchmark:
+
+```sh
+./run_benchmark.sh
+```
+
+O script roda a versão CUDA (que já inclui CPU baseline), mede desempenho e gera o arquivo:
+
+```sh
+benchmark_results.csv
+```
+
+
+
 
 
 
