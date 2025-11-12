@@ -1,0 +1,180 @@
+// matmul_cuda_coalesced.cu
+// Compilar: nvcc -O3 -arch=sm_70 -o matmul_cuda_coalesced matmul_cuda_coalesced.cu
+// Execução: ./matmul_cuda_coalesced 1024 1024 1024 10 16
+
+#include <cstdio>
+#include <cstdlib>
+#include <chrono>
+#include <cmath>
+
+#define CHECK_CUDA(call) do {                                     \
+    cudaError_t err = call;                                       \
+    if (err != cudaSuccess) {                                     \
+        fprintf(stderr, "Erro CUDA em %s:%d -> %s\n",             \
+                __FILE__, __LINE__, cudaGetErrorString(err));     \
+        exit(EXIT_FAILURE);                                       \
+    }                                                             \
+} while (0)
+
+__global__ void matmul_coalesced(const float* __restrict__ A,
+                                 const float* __restrict__ B,
+                                 float* __restrict__ C,
+                                 int M, int N, int K, int TILE) {
+    int row = blockIdx.y * TILE + threadIdx.y;
+    int col = blockIdx.x * TILE + threadIdx.x;
+
+    extern __shared__ float shared[];
+    float* As = shared;
+    float* Bs = shared + TILE * TILE;
+
+    float acc = 0.0f;
+    int numTiles = (K + TILE - 1) / TILE;
+
+    for (int t = 0; t < numTiles; ++t) {
+        // Índices globais para A e B
+        int aCol = t * TILE + threadIdx.x;
+        int bRow = t * TILE + threadIdx.y;
+
+        // Leitura coalescida de A: threads consecutivos leem elementos consecutivos da linha
+        if (row < M && aCol < K)
+            As[threadIdx.y * TILE + threadIdx.x] = A[row * K + aCol];
+        else
+            As[threadIdx.y * TILE + threadIdx.x] = 0.0f;
+
+        // Leitura coalescida de B: threads consecutivos leem elementos consecutivos da linha
+        if (bRow < K && col < N)
+            Bs[threadIdx.y * TILE + threadIdx.x] = B[bRow * N + col];
+        else
+            Bs[threadIdx.y * TILE + threadIdx.x] = 0.0f;
+
+        __syncthreads();
+
+        // Multiplicação local no bloco (uso de memória compartilhada)
+        #pragma unroll
+        for (int k = 0; k < TILE; ++k)
+            acc += As[threadIdx.y * TILE + k] * Bs[k * TILE + threadIdx.x];
+
+        __syncthreads();
+    }
+
+    if (row < M && col < N)
+        C[row * N + col] = acc;
+}
+
+// Multiplicação CPU (baseline)
+void matmul_cpu(const float* A, const float* B, float* C, int M, int N, int K) {
+    for (int i = 0; i < M; ++i)
+        for (int j = 0; j < N; ++j) {
+            float sum = 0.0f;
+            for (int k = 0; k < K; ++k)
+                sum += A[i * K + k] * B[k * N + j];
+            C[i * N + j] = sum;
+        }
+}
+
+int main(int argc, char** argv) {
+    if (argc < 5) {
+        printf("Uso: %s M N K iteracoes [tile_size]\n", argv[0]);
+        return 1;
+    }
+
+    int M = atoi(argv[1]);
+    int N = atoi(argv[2]);
+    int K = atoi(argv[3]);
+    int iterations = atoi(argv[4]);
+    int TILE = (argc >= 6) ? atoi(argv[5]) : 16;
+
+    printf("\n=== Multiplicação de Matrizes CUDA (Coalesced) ===\n");
+    printf("Dimensões: A(%d×%d), B(%d×%d), C(%d×%d)\n", M, K, K, N, M, N);
+    printf("Tile: %d | Iterações: %d\n\n", TILE, iterations);
+
+    size_t sizeA = (size_t)M * K;
+    size_t sizeB = (size_t)K * N;
+    size_t sizeC = (size_t)M * N;
+
+    float *h_A = (float*)malloc(sizeA * sizeof(float));
+    float *h_B = (float*)malloc(sizeB * sizeof(float));
+    float *h_C = (float*)malloc(sizeC * sizeof(float));
+    float *h_C_ref = (float*)malloc(sizeC * sizeof(float));
+
+    if (!h_A || !h_B || !h_C || !h_C_ref) {
+        fprintf(stderr, "Erro ao alocar memória no host.\n");
+        return 1;
+    }
+
+    srand(42);
+    for (size_t i = 0; i < sizeA; i++) h_A[i] = (float)((rand() % 100) / 10.0f);
+    for (size_t i = 0; i < sizeB; i++) h_B[i] = (float)((rand() % 100) / 10.0f);
+
+    // Baseline CPU
+    printf("Executando baseline CPU...\n");
+    auto start_cpu = std::chrono::high_resolution_clock::now();
+    matmul_cpu(h_A, h_B, h_C_ref, M, N, K);
+    auto end_cpu = std::chrono::high_resolution_clock::now();
+    double time_cpu = std::chrono::duration<double, std::milli>(end_cpu - start_cpu).count();
+    printf("Tempo CPU: %.3f ms\n", time_cpu);
+
+    // Alocação na GPU
+    float *d_A, *d_B, *d_C;
+    CHECK_CUDA(cudaMalloc(&d_A, sizeA * sizeof(float)));
+    CHECK_CUDA(cudaMalloc(&d_B, sizeB * sizeof(float)));
+    CHECK_CUDA(cudaMalloc(&d_C, sizeC * sizeof(float)));
+
+    CHECK_CUDA(cudaMemcpy(d_A, h_A, sizeA * sizeof(float), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_B, h_B, sizeB * sizeof(float), cudaMemcpyHostToDevice));
+
+    dim3 block(TILE, TILE);
+    dim3 grid((N + TILE - 1) / TILE, (M + TILE - 1) / TILE);
+    size_t shared_bytes = 2 * TILE * TILE * sizeof(float);
+
+    // Medição de tempo com eventos
+    cudaEvent_t start, stop;
+    CHECK_CUDA(cudaEventCreate(&start));
+    CHECK_CUDA(cudaEventCreate(&stop));
+
+    float total_ms = 0;
+    for (int it = 0; it < iterations; ++it) {
+        CHECK_CUDA(cudaEventRecord(start));
+        matmul_coalesced<<<grid, block, shared_bytes>>>(d_A, d_B, d_C, M, N, K, TILE);
+        CHECK_CUDA(cudaEventRecord(stop));
+        CHECK_CUDA(cudaEventSynchronize(stop));
+        float ms;
+        CHECK_CUDA(cudaEventElapsedTime(&ms, start, stop));
+        total_ms += ms;
+    }
+
+    float avg_ms = total_ms / iterations;
+    printf("\nTempo médio GPU: %.3f ms\n", avg_ms);
+
+    CHECK_CUDA(cudaMemcpy(h_C, d_C, sizeC * sizeof(float), cudaMemcpyDeviceToHost));
+
+    // Validação
+    double max_err = 0.0;
+    for (size_t i = 0; i < sizeC; i++) {
+        double ref = h_C_ref[i];
+        double val = h_C[i];
+        double err = fabs(ref - val);
+        if (err > max_err) max_err = err;
+    }
+
+    double gflops_cpu = (2.0 * M * N * K) / (time_cpu / 1000.0) / 1e9;
+    double gflops_gpu = (2.0 * M * N * K) / (avg_ms / 1000.0) / 1e9;
+    double speedup = time_cpu / avg_ms;
+
+    printf("\n=== Resultados ===\n");
+    printf("GFLOPS (CPU): %.2f\n", gflops_cpu);
+    printf("GFLOPS (GPU): %.2f\n", gflops_gpu);
+    printf("Speedup: %.2fx\n", speedup);
+    printf("Erro absoluto máximo: %.6e\n", max_err);
+    printf("==================\n");
+
+    // Libera memória
+    CHECK_CUDA(cudaFree(d_A));
+    CHECK_CUDA(cudaFree(d_B));
+    CHECK_CUDA(cudaFree(d_C));
+    free(h_A); free(h_B); free(h_C); free(h_C_ref);
+    CHECK_CUDA(cudaEventDestroy(start));
+    CHECK_CUDA(cudaEventDestroy(stop));
+
+    return 0;
+}
